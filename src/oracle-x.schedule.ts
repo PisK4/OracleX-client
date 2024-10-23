@@ -129,12 +129,19 @@ export class OracleXSchedule {
       case MessageMatchedFlag.ACTIVE_MODE_QUERY:
         this.createActiveModeSubscriptionEntity(eventLogEntity);
         break;
+      case MessageMatchedFlag.PASSIVE_MODE_QUERY:
+        this.createPassiveModeSubscriptionEntity(eventLogEntity);
+        break;
       default:
         break;
     }
   }
 
   private createActiveModeSubscriptionEntity(eventData: any) {
+    this.oracleXSubscriptions.push(eventData);
+  }
+
+  private createPassiveModeSubscriptionEntity(eventData: any) {
     this.oracleXSubscriptions.push(eventData);
   }
 

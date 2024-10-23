@@ -8,6 +8,7 @@ import {
   DataCommitment2,
   EventLogEntity,
   ProofPublicInput,
+  publicInputType,
 } from './lib/oracle-x.interface';
 import { Interval, SchedulerRegistry } from '@nestjs/schedule';
 import { OracleXSchedule } from './oracle-x.schedule';
@@ -53,6 +54,16 @@ export class OraclexDataCommitService {
 
   private oracleX: ethers.Contract;
 
+  private nonce = 0;
+
+  private async getNonce() {
+    return await this.oracleXSigner.getNonce();
+    // return this.oracleXSigner.provider.getTransactionCount(
+    //   this.oracleXSigner.getAddress(),
+    //   'latest',
+    // );
+  }
+
   private initSigner() {
     const mnemonic = process.env.ORACLE_X_SIGNER_MNEMONIC;
     if (!mnemonic) {
@@ -89,7 +100,16 @@ export class OraclexDataCommitService {
     return this.oracleXSigner;
   }
 
-  @Interval(5000)
+  @Interval(500)
+  async recalculateNonce(): Promise<void> {
+    const networkNonce = await this.getNonce();
+    if (networkNonce + 20 < this.nonce || this.nonce == 0) {
+      this.logger.log(`recalculateNonce: ${this.nonce} to ${networkNonce}`);
+      this.nonce = networkNonce;
+    }
+  }
+
+  @Interval(10000)
   async scanDataCommitmentsTask(): Promise<void> {
     const eventLogEntities = this.oracleXScanner.fetchSubscriptions();
 
@@ -101,6 +121,23 @@ export class OraclexDataCommitService {
           await this.buildDataCommitmentSingleSignature(eventLogEntity);
           break;
         case AuthMode.MULTISIG:
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  @Interval(30000)
+  async scanDataCommitmentsTask2(): Promise<void> {
+    const eventLogEntities = this.oracleXScanner.fetchSubscriptions();
+
+    for (const eventLogEntity of eventLogEntities) {
+      const authMode = eventLogEntity.eventData.authMode;
+
+      switch (authMode) {
+        case AuthMode.PROOF:
+          await this.buildDataCommitmentByProof(eventLogEntity);
           break;
         default:
           break;
@@ -123,7 +160,6 @@ export class OraclexDataCommitService {
 
     const tx = await this.dataCommitmentBySignatureActiveMode(dataCommitment);
     await tx.wait();
-    this.logger.log(`======Data commitment by signature created: ${tx.hash}`);
   }
 
   private async dataCommitmentBySignatureActiveMode(
@@ -133,11 +169,20 @@ export class OraclexDataCommitService {
       this.oracleXSigner,
       dataCommitment,
     );
-    return await this.oracleX.dataCommitmentBySignatureA(
+    const newNonce = this.nonce;
+    this.nonce += 1;
+    const tx = await this.oracleX.dataCommitmentBySignatureA(
       dataCommitment.subscriptionId,
       dataCommitment.data,
       [signature],
+      {
+        nonce: newNonce,
+      },
     );
+    this.logger.log(
+      `======Data commitment by signature created: ${tx.hash}, nonce:${newNonce}`,
+    );
+    return tx;
   }
 
   private async activeModeDataSig(
@@ -156,23 +201,43 @@ export class OraclexDataCommitService {
     return await signer.signMessage(toBeArray(encodeMessageHash));
   }
 
+  private async buildDataCommitmentByProof(eventLogEntity: EventLogEntity) {
+    const dataCommitment: DataCommitment1 = {
+      oracleXAddr: await this.oracleX.getAddress(),
+      currChainId: 31337,
+      callbackSelector: '0x1103ada8',
+      requestId: eventLogEntity.eventData.requestId,
+      callbackAddress: eventLogEntity.eventData.callbackAddress,
+      callbackGasLimit: eventLogEntity.eventData.callbackGasLimit,
+      data: this.fetchOracleXData(),
+    };
+    await this.dataCommitmentByProofPassiveMode(dataCommitment);
+  }
+
   private async dataCommitmentByProofPassiveMode(
     dataCommitment: DataCommitment1,
   ) {
     const publicInput: ProofPublicInput = {
       taskId: 0,
       callbackSelector: dataCommitment.callbackSelector,
-      queryMode: '0x00',
+      queryMode: String('0'),
       requestId: dataCommitment.requestId,
       subId: dataCommitment.requestId,
       callbackAddress: dataCommitment.callbackAddress,
-      callbackGasLimit: dataCommitment.callbackGasLimit,
+      callbackGasLimit: BigInt(dataCommitment.callbackGasLimit),
       data: dataCommitment.data,
     };
     const proof = this.publicInputEncode(publicInput);
-    const tx = await this.oracleX.dataCommitmentByProof(proof);
+    const newNonce = this.nonce;
+    this.nonce += 1;
+    const tx = await this.oracleX.dataCommitmentByProof(proof, {
+      nonce: newNonce,
+      gaslimit: 500000,
+    });
+    this.logger.debug(
+      `========Data commitment by proof created: ${tx.hash}, nonce:${newNonce}`,
+    );
     await tx.wait();
-    this.logger.log(`Data commitment by proof created: ${tx.hash}`);
   }
 
   private publicInputEncode(proofPublicInput: ProofPublicInput) {
@@ -208,6 +273,7 @@ export class OraclexDataCommitService {
       toBeArray(ethers.hexlify(proofPublicInput.data)),
       32,
     );
+    // this.logger.debug('here2');
     const publicInputData =
       '0x' +
       padTaskId.replace('0x', '') +
@@ -218,12 +284,18 @@ export class OraclexDataCommitService {
       padCallbackAddress.replace('0x', '') +
       padCallbackGasLimit.replace('0x', '') +
       padData.replace('0x', '');
-
+    // this.logger.debug('here3');
     const encodedata = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes'],
       [publicInputData],
     );
 
+    // this.logger.debug('here4');
+
     return '0x8e760afe' + encodedata.replace('0x', '');
+  }
+
+  private fetchOracleXData() {
+    return ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [1]);
   }
 }
