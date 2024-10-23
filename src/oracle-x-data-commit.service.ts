@@ -4,9 +4,13 @@ import { OracleXAbi } from './lib/abi.utils';
 import {
   AuthMode,
   dataCommitBySigType2,
+  DataCommitment1,
   DataCommitment2,
   EventLogEntity,
+  ProofPublicInput,
 } from './lib/oracle-x.interface';
+import { Interval, SchedulerRegistry } from '@nestjs/schedule';
+import { OracleXSchedule } from './oracle-x.schedule';
 
 @Injectable()
 export class OracleX {
@@ -43,7 +47,7 @@ export class OraclexDataCommitService {
 
   private contractAddress: string =
     process.env.ORACLE_X_CONTRACT_ADDRESS ||
-    '0x67F59911469cefE3BFe43ffbcF0E63C6Dc0F0616';
+    '0xb71D7A9381b85D67CBc9E3302492656057964bc0';
 
   private url: string = process.env.RPC_NODE || 'http://127.0.0.1:8545/';
 
@@ -65,7 +69,10 @@ export class OraclexDataCommitService {
 
   private iface = new ethers.Interface(OracleXAbi);
 
-  constructor() {
+  constructor(
+    private schedulerRegistry: SchedulerRegistry,
+    private oracleXScanner: OracleXSchedule,
+  ) {
     this.oracleX = new ethers.Contract(
       this.contractAddress,
       OracleXAbi,
@@ -82,35 +89,30 @@ export class OraclexDataCommitService {
     return this.oracleXSigner;
   }
 
-  public async scanDataCommitmentsTask(eventLogEntity: EventLogEntity) {
-    if (eventLogEntity.eventData.length == 0) {
-      return;
-    }
-    const authMode = eventLogEntity.eventData.authMode;
+  @Interval(5000)
+  async scanDataCommitmentsTask(): Promise<void> {
+    const eventLogEntities = this.oracleXScanner.fetchSubscriptions();
 
-    // this.logger.log(
-    //   `subscriptionId: ${eventLogEntity.eventData.subsciptionId}`,
-    // );
-    switch (authMode) {
-      case AuthMode.SIGNATURE:
-        await this.buildDataCommitment(eventLogEntity);
-        break;
-      case AuthMode.MULTISIG:
-        // await this.buildDataCommitment();
-        break;
-      case AuthMode.PROOF:
-        // await this.buildDataCommitment();
-        break;
-      default:
-        break;
+    for (const eventLogEntity of eventLogEntities) {
+      const authMode = eventLogEntity.eventData.authMode;
+
+      switch (authMode) {
+        case AuthMode.SIGNATURE:
+          await this.buildDataCommitmentSingleSignature(eventLogEntity);
+          break;
+        case AuthMode.MULTISIG:
+          break;
+        default:
+          break;
+      }
     }
   }
 
-  private async buildDataCommitment(eventLogEntity: EventLogEntity) {
+  private async buildDataCommitmentSingleSignature(
+    eventLogEntity: EventLogEntity,
+  ) {
     const chainId = 31337;
     const AbiCoder = ethers.AbiCoder.defaultAbiCoder();
-
-    // this.logger.log(`oracleX: ${await this.oracleX.getAddress()}`);
 
     const dataCommitment: DataCommitment2 = {
       oracleXAddr: await this.oracleX.getAddress(),
@@ -121,6 +123,7 @@ export class OraclexDataCommitService {
 
     const tx = await this.dataCommitmentBySignatureActiveMode(dataCommitment);
     await tx.wait();
+    this.logger.log(`======Data commitment by signature created: ${tx.hash}`);
   }
 
   private async dataCommitmentBySignatureActiveMode(
@@ -151,5 +154,76 @@ export class OraclexDataCommitService {
       ]),
     );
     return await signer.signMessage(toBeArray(encodeMessageHash));
+  }
+
+  private async dataCommitmentByProofPassiveMode(
+    dataCommitment: DataCommitment1,
+  ) {
+    const publicInput: ProofPublicInput = {
+      taskId: 0,
+      callbackSelector: dataCommitment.callbackSelector,
+      queryMode: '0x00',
+      requestId: dataCommitment.requestId,
+      subId: dataCommitment.requestId,
+      callbackAddress: dataCommitment.callbackAddress,
+      callbackGasLimit: dataCommitment.callbackGasLimit,
+      data: dataCommitment.data,
+    };
+    const proof = this.publicInputEncode(publicInput);
+    const tx = await this.oracleX.dataCommitmentByProof(proof);
+    await tx.wait();
+    this.logger.log(`Data commitment by proof created: ${tx.hash}`);
+  }
+
+  private publicInputEncode(proofPublicInput: ProofPublicInput) {
+    const padTaskId = ethers.zeroPadValue(
+      toBeArray(proofPublicInput.taskId.toString()),
+      8,
+    );
+    const padCallbackSelector = ethers.zeroPadValue(
+      toBeArray(proofPublicInput.callbackSelector),
+      4,
+    );
+    const padQueryMode = ethers.zeroPadValue(
+      toBeArray(proofPublicInput.queryMode),
+      1,
+    );
+    const padRequestId = ethers.zeroPadValue(
+      toBeArray(ethers.hexlify(proofPublicInput.requestId)),
+      32,
+    );
+    const padSubId = ethers.zeroPadValue(
+      toBeArray(ethers.hexlify(proofPublicInput.subId)),
+      32,
+    );
+    const padCallbackAddress = ethers.zeroPadValue(
+      toBeArray(ethers.hexlify(proofPublicInput.callbackAddress.toString())),
+      20,
+    );
+    const padCallbackGasLimit = ethers.zeroPadValue(
+      toBeArray(proofPublicInput.callbackGasLimit.toString()),
+      8,
+    );
+    const padData = ethers.zeroPadValue(
+      toBeArray(ethers.hexlify(proofPublicInput.data)),
+      32,
+    );
+    const publicInputData =
+      '0x' +
+      padTaskId.replace('0x', '') +
+      padCallbackSelector.replace('0x', '') +
+      padQueryMode.replace('0x', '') +
+      padRequestId.replace('0x', '') +
+      padSubId.replace('0x', '') +
+      padCallbackAddress.replace('0x', '') +
+      padCallbackGasLimit.replace('0x', '') +
+      padData.replace('0x', '');
+
+    const encodedata = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['bytes'],
+      [publicInputData],
+    );
+
+    return '0x8e760afe' + encodedata.replace('0x', '');
   }
 }

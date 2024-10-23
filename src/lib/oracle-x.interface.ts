@@ -50,3 +50,25 @@ export interface DataCommitment2 {
 export interface EventLogEntity {
   eventData: any;
 }
+
+export interface ProofPublicInput {
+  taskId: BigNumberish;
+  callbackSelector: string;
+  queryMode: string;
+  requestId: Uint8Array;
+  subId: Uint8Array;
+  callbackAddress: string;
+  callbackGasLimit: BigNumberish;
+  data: string;
+}
+
+export const publicInputType = [
+  'uint64',
+  'bytes4',
+  'bytes1',
+  'bytes32',
+  'bytes32',
+  'address',
+  'uint64',
+  'bytes',
+];

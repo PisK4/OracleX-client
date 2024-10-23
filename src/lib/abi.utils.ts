@@ -126,6 +126,11 @@ export const OracleXAbi = [
   },
   {
     inputs: [],
+    name: 'PassiveCallbackError',
+    type: 'error',
+  },
+  {
+    inputs: [],
     name: 'ProofVerificationFailure',
     type: 'error',
   },
@@ -769,6 +774,11 @@ export const OracleXAbi = [
         type: 'address',
       },
       {
+        internalType: 'address',
+        name: '_defaultVerifier',
+        type: 'address',
+      },
+      {
         internalType: 'address[]',
         name: '_relayers',
         type: 'address[]',
@@ -1053,6 +1063,19 @@ export const OracleXAbi = [
       },
     ],
     stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'bytes',
+        name: 'proof',
+        type: 'bytes',
+      },
+    ],
+    name: 'verify',
+    outputs: [],
+    stateMutability: 'nonpayable',
     type: 'function',
   },
   {
