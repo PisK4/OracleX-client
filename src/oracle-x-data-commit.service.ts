@@ -58,10 +58,6 @@ export class OraclexDataCommitService {
 
   private async getNonce() {
     return await this.oracleXSigner.getNonce();
-    // return this.oracleXSigner.provider.getTransactionCount(
-    //   this.oracleXSigner.getAddress(),
-    //   'latest',
-    // );
   }
 
   private initSigner() {
@@ -225,7 +221,9 @@ export class OraclexDataCommitService {
       subId: dataCommitment.requestId,
       callbackAddress: dataCommitment.callbackAddress,
       callbackGasLimit: BigInt(dataCommitment.callbackGasLimit),
+      dataLength: BigInt(dataCommitment.data.length),
       data: dataCommitment.data,
+      proof: this.fetchZkProof(),
     };
     const proof = this.publicInputEncode(publicInput);
     const newNonce = this.nonce;
@@ -269,11 +267,14 @@ export class OraclexDataCommitService {
       toBeArray(proofPublicInput.callbackGasLimit.toString()),
       8,
     );
+    const padDataLength = ethers.zeroPadValue(
+      toBeArray(proofPublicInput.dataLength.toString()),
+      32,
+    );
     const padData = ethers.zeroPadValue(
       toBeArray(ethers.hexlify(proofPublicInput.data)),
       32,
     );
-    // this.logger.debug('here2');
     const publicInputData =
       '0x' +
       padTaskId.replace('0x', '') +
@@ -283,19 +284,22 @@ export class OraclexDataCommitService {
       padSubId.replace('0x', '') +
       padCallbackAddress.replace('0x', '') +
       padCallbackGasLimit.replace('0x', '') +
-      padData.replace('0x', '');
-    // this.logger.debug('here3');
+      padDataLength.replace('0x', '') +
+      padData.replace('0x', '') +
+      proofPublicInput.proof.replace('0x', '');
     const encodedata = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes'],
       [publicInputData],
     );
-
-    // this.logger.debug('here4');
 
     return '0x8e760afe' + encodedata.replace('0x', '');
   }
 
   private fetchOracleXData() {
     return ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [1]);
+  }
+
+  private fetchZkProof() {
+    return ethers.hexlify(ethers.randomBytes(32));
   }
 }

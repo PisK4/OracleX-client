@@ -59,7 +59,9 @@ export interface ProofPublicInput {
   subId: Uint8Array;
   callbackAddress: string;
   callbackGasLimit: BigNumberish;
+  dataLength: BigNumberish;
   data: string;
+  proof: string;
 }
 
 export const publicInputType = [
@@ -70,5 +72,6 @@ export const publicInputType = [
   'bytes32',
   'address',
   'uint64',
+  'uint256',
   'bytes',
 ];
